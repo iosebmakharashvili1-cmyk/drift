@@ -37,6 +37,27 @@ export default{async fetch(req,env){const u=new URL(req.url),p=u.pathname;
  if(p==='/api/library'){if(req.method==='GET'){const r=await env.DB.prepare('SELECT data FROM lib WHERE uid=?').bind(U.id).first();return J({data:r?JSON.parse(r.data):null})}
   const t=await req.text();if(t.length>5e5)return J({error:'Too large'},413);JSON.parse(t);
   await env.DB.prepare('INSERT INTO lib VALUES(?,?,?) ON CONFLICT(uid) DO UPDATE SET data=excluded.data,updated=excluded.updated').bind(U.id,t,Date.now()).run();return J({ok:true})}
+ if(p==='/api/e'&&req.method==='GET'){const k=u.searchParams.get('kind');if(!['gig','album','list'].includes(k))return J({error:'Bad kind'},400);
+  const r=await env.DB.prepare(`SELECT id,artist,day,data FROM entries WHERE uid=? AND kind=? ORDER BY COALESCE(day,'') DESC,created DESC LIMIT 500`).bind(U.id,k).all(),items=r.results;
+  if(k==='gig'){const o=await env.DB.prepare(`SELECT e.artist,e.day,u.name FROM entries e JOIN follows f ON f.followee=e.uid AND f.follower=? JOIN users u ON u.id=e.uid WHERE e.kind='gig' AND e.day IS NOT NULL LIMIT 3000`).bind(U.id).all();
+   for(const g of items)g.others=g.day?[...new Set(o.results.filter(x=>x.artist===g.artist&&x.day===g.day).map(x=>x.name))].slice(0,10):[]}
+  return J({items})}
+ if(p==='/api/e'&&req.method==='POST'){const b=await req.json(),id=String(b.id||crypto.randomUUID()).slice(0,64),k=['gig','album','list'].includes(b.kind)?b.kind:null;if(!k)return J({error:'Bad kind'},400);
+  const data=JSON.stringify(b.data||{});if(data.length>20000)return J({error:'Too large'},413);
+  const ex=await env.DB.prepare('SELECT 1 x FROM entries WHERE id=? AND uid=?').bind(id,U.id).first(),c=await env.DB.prepare('SELECT COUNT(*) c FROM entries WHERE uid=? AND kind=?').bind(U.id,k).first();
+  if(!ex&&c.c>=2000)return J({error:'Entry limit reached'},400);
+  await env.DB.prepare('INSERT INTO entries VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET artist=excluded.artist,day=excluded.day,data=excluded.data WHERE entries.uid=excluded.uid').bind(id,U.id,k,String(b.artist||'').slice(0,200),/^\d{4}-\d\d-\d\d$/.test(b.day||'')?b.day:null,data,Date.now()).run();return J({id})}
+ const dm=p.match(/^\/api\/e\/([\w-]{1,64})$/);if(dm&&req.method==='DELETE'){await env.DB.prepare('DELETE FROM entries WHERE id=? AND uid=?').bind(dm[1],U.id).run();return J({ok:true})}
+ if(p==='/api/follow'&&req.method==='GET'){const r=await env.DB.prepare('SELECT u.name FROM follows f JOIN users u ON u.id=f.followee WHERE f.follower=?').bind(U.id).all();return J({names:r.results.map(x=>x.name)})}
+ if(p==='/api/follow'||p==='/api/unfollow'){const b=await req.json(),t=await env.DB.prepare('SELECT id FROM users WHERE name=?').bind(String(b.name||'').toLowerCase()).first();if(!t||t.id===U.id)return J({error:'No such user'},404);
+  if(p==='/api/follow'){const c=await env.DB.prepare('SELECT COUNT(*) c FROM follows WHERE follower=?').bind(U.id).first();if(c.c>=500)return J({error:'Follow limit reached'},400);await env.DB.prepare('INSERT OR IGNORE INTO follows VALUES(?,?)').bind(U.id,t.id).run()}
+  else await env.DB.prepare('DELETE FROM follows WHERE follower=? AND followee=?').bind(U.id,t.id).run();return J({ok:true})}
+ if(p==='/api/feed'){const r=await env.DB.prepare(`SELECT e.kind,e.artist,e.day,e.data,u.name FROM entries e JOIN follows f ON f.followee=e.uid AND f.follower=? JOIN users u ON u.id=e.uid WHERE e.kind IN ('gig','album') ORDER BY e.created DESC LIMIT 40`).bind(U.id).all();return J({items:r.results})}
+ if(p==='/api/setlist'){if(!env.SETLISTFM_KEY)return J({error:'Setlist lookup is not configured on this server'},501);const q=new URLSearchParams({artistName:u.searchParams.get('artist')||'',p:'1'}),d=u.searchParams.get('date')||'';
+  if(/^\d{4}-\d\d-\d\d$/.test(d)){const [y,mo,da]=d.split('-');q.set('date',`${da}-${mo}-${y}`)}
+  const r=await fetch('https://api.setlist.fm/rest/1.0/search/setlists?'+q,{headers:{'x-api-key':env.SETLISTFM_KEY,accept:'application/json'}});if(!r.ok)return J({error:'No setlist found'},404);
+  const j=await r.json(),s=(j.setlist||[]).find(x=>x.sets&&x.sets.set&&x.sets.set.some(t=>t.song&&t.song.length));if(!s)return J({error:'No setlist found'},404);
+  return J({songs:s.sets.set.flatMap(t=>(t.song||[]).map(x=>x.name)).filter(Boolean)})}
  if(p==='/api/import'){const b=await req.json();return J(await imp(env,String(b.url||'')))}
  if(p==='/api/rooms'&&req.method==='POST'){const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',id=[...crypto.getRandomValues(new Uint8Array(6))].map(x=>A[x%A.length]).join('');
   await env.DB.prepare('INSERT INTO rooms VALUES(?,?,?)').bind(id,U.id,Date.now()).run();return J({id})}
