@@ -32,7 +32,7 @@ export default{async fetch(req,env){const u=new URL(req.url),p=u.pathname;
   return J({user:{id:r.id,name}},200,{'set-cookie':await login(env,r.id)})}
  if(p==='/api/logout'){const t=cookie(req,'sid');if(t)await env.DB.prepare('DELETE FROM sessions WHERE sid=?').bind(await sha(t)).run();return J({user:null},200,{'set-cookie':'sid=; Max-Age=0; Path=/'})}
  if(p==='/api/lyrics'){const q=new URLSearchParams({track_name:u.searchParams.get('title')||'',artist_name:u.searchParams.get('artist')||''});const d=+u.searchParams.get('dur');if(d)q.set('duration',d);
-  const r=await fetch('https://lrclib.net/api/get?'+q,{headers:{'user-agent':'Drift/1.0'},cf:{cacheTtl:86400,cacheEverything:true}});if(!r.ok)return J({synced:null});const j=await r.json();return J({synced:j.syncedLyrics||null})}
+  const r=await fetch('https://lrclib.net/api/get?'+q,{headers:{'user-agent':'Drift/1.0'},cf:{cacheTtl:86400,cacheEverything:true}});if(!r.ok)return J({synced:null});const j=await r.json();return J({synced:j.syncedLyrics||null,plain:j.plainLyrics||null})}
  if(!U)return J({error:'Log in first'},401);
  if(p==='/api/library'){if(req.method==='GET'){const r=await env.DB.prepare('SELECT data FROM lib WHERE uid=?').bind(U.id).first();return J({data:r?JSON.parse(r.data):null})}
   const t=await req.text();if(t.length>5e5)return J({error:'Too large'},413);JSON.parse(t);
