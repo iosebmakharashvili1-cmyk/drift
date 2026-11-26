@@ -10,6 +10,7 @@ wrangler d1 create drift                      # copy database_id into wrangler.t
 wrangler d1 execute drift --remote --file=schema.sql
 wrangler secret put SPOTIFY_ID                # optional: link import
 wrangler secret put SPOTIFY_SECRET            # (create an app at developer.spotify.com)
+wrangler secret put SETLISTFM_KEY             # optional: setlist lookup (free key at setlist.fm/settings/api)
 wrangler deploy
 ```
 Then add a custom domain in the Cloudflare dashboard (Workers > drift > Settings > Domains).
@@ -21,6 +22,17 @@ Local test: `wrangler dev` (use `--remote` for D1).
 - `/api/library`: stores playlists and likes per account; the page syncs automatically.
 - `/api/import`: Spotify track/album/playlist link -> playlist of "Artist|Title" entries.
 - `/api/rooms`: a Durable Object per room, up to 50 listeners; the host's playback state is broadcast, guests follow; emoji reactions.
+
+- `/api/e`, `/api/follow`, `/api/feed`, `/api/setlist`: the music diary (gigs and festivals, album ratings and reviews, lists, following friends, setlists from setlist.fm).
+
+## Updating an existing deployment
+```bash
+wrangler d1 execute drift --remote --file=schema.sql   # safe to re-run, adds the new tables
+wrangler deploy
+```
+
+## Privacy
+People you follow can see your gigs and album ratings, and "Also there" only shows people you follow. Lists are private.
 
 ## Known limits
 - Drift never streams audio. Imported playlists and rooms match tracks by "Artist - Title", so each listener needs the same file name in their own library.
