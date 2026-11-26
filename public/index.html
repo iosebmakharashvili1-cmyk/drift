@@ -23,7 +23,7 @@ h2{font:600 28px Unbounded,'Noto Sans Georgian',sans-serif;margin:34px 0 14px}h2
 .hero{position:relative;min-height:230px;display:flex;flex-direction:column;justify-content:center;gap:18px}
 #halo{position:absolute;right:0;top:-10px;width:min(46%,420px);aspect-ratio:2/1;opacity:.9}
 .row{display:flex;gap:16px;overflow-x:auto;padding-bottom:8px}
-.mix{flex:0 0 176px;text-align:left}.mix .c{position:relative;width:176px;height:176px;border-radius:12px;overflow:hidden}
+.mix{flex:0 0 176px;width:176px;min-width:0;overflow:hidden;text-align:left}.mix p,.mix small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mix .c{position:relative;width:176px;height:176px;border-radius:12px;overflow:hidden}
 .mix img,.cv{width:100%;height:100%;object-fit:cover;display:block}
 .mix .c i{position:absolute;left:12px;bottom:6px;font:800 34px Unbounded;font-style:normal;text-shadow:0 2px 12px #0008}
 .mix p{margin-top:8px;font-weight:700}.mix small,.sub{color:var(--mute);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -268,7 +268,7 @@ function mixes(){const n=Math.min(6,Math.max(1,T.length)),o=[];for(let k=0;k<n;k
 function render(){const m=$('#main');hist();document.querySelectorAll('#side [data-v]').forEach(b=>b.classList.toggle('on',b.dataset.v===view||(view==='pl'&&b.dataset.v==='lib')));
  if(view==='home'){m.innerHTML=`<div class="hero"><canvas id="halo" width="420" height="210"></canvas><h1>My<br><span>Drift</span></h1><div><button class="btn" id="hp">▶ &nbsp;<span>Play</span></button> <button class="btn g" id="ha" title="Add music">＋ <span>Add music</span></button></div></div>
  <h2>Your <b>Mixes</b></h2><div class="row">${mixes().map(x=>`<button class="mix" data-m="${x.n-1}"><div class="c"><img src="${cover(x.seed,176)}" alt=""><i>MIX ${x.n}</i></div><p>Daily Mix ${x.n}</p><small>${esc(x.l.slice(0,3).map(t=>t.artist).join(', '))}</small></button>`).join('')}</div>
- <h2>Listening <b>right now</b></h2><div class="list">${T.map(rowH).join('')}</div>`;
+ <h2>Listening <b>right now</b></h2><div class="list">${T.map((t,i)=>rowH(t,i)).join('')}</div>`;
   $('#hp').onclick=()=>playList(T);$('#ha').onclick=()=>$('#fa_in').click();m.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>playList(mixes()[b.dataset.m].l))}
  else if(view==='search'){m.innerHTML=`<h2 style="margin-top:0">Search</h2><input class="s" id="q" placeholder="Songs or artists" value="${esc(window._q||'')}" autofocus><div class="list" id="res" style="margin-top:18px"></div>`;const run=()=>{window._q=$('#q').value;const q=_q.toLowerCase(),r=T.map((t,i)=>[t,i]).filter(([t])=>!q||(t.title+t.artist).toLowerCase().includes(q));$('#res').innerHTML=r.map(([t,i])=>rowH(t,i)).join('')||'<p class="empty">No matches.</p>';bind()};$('#q').oninput=run;run();return}
  else if(view==='pl'){plView(m)}else if(view==='acct'){acctView(m)}else if(view==='room'){roomView(m)}else if(view==='diary'){diaryView(m)}else if(view==='set'){setView(m)}else{const l=T.map((t,i)=>[t,i]);m.innerHTML=`<h2 style="margin-top:0">Library</h2>${plSec()}${impBox()}<h2 style="font-size:20px;margin:0 0 10px">Liked <b>${[...likes].filter(k=>T.some(t=>t.key===k)).length}</b></h2><div class="list">${l.filter(([t])=>likes.has(t.key)).map(([t,i])=>rowH(t,i)).join('')||'<p class="empty">Tap the heart on a track to save it here.</p>'}</div><h2>All tracks</h2><div class="list">${l.map(([t,i])=>rowH(t,i,t.rec?`<span class="x" data-rm="${i}" title="Remove from library">✕</span>`:'')).join('')}</div>`}
