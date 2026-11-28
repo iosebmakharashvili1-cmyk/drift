@@ -11,6 +11,8 @@ wrangler d1 execute drift --remote --file=schema.sql
 wrangler secret put SPOTIFY_ID                # optional: link import
 wrangler secret put SPOTIFY_SECRET            # (create an app at developer.spotify.com)
 wrangler secret put SETLISTFM_KEY             # optional: setlist lookup (free key at setlist.fm/settings/api)
+wrangler secret put YOUTUBE_KEY               # optional: finds a YouTube match for imported Spotify tracks (YouTube Data API v3)
+wrangler secret put ANTHROPIC_API_KEY         # optional: poster scanning (paid, capped at 15 scans per user per day)
 wrangler deploy
 ```
 Then add a custom domain in the Cloudflare dashboard (Workers > drift > Settings > Domains).
@@ -24,6 +26,15 @@ Local test: `wrangler dev` (use `--remote` for D1).
 - `/api/rooms`: a Durable Object per room, up to 50 listeners; the host's playback state is broadcast, guests follow; emoji reactions.
 
 - `/api/e`, `/api/follow`, `/api/feed`, `/api/setlist`: the music diary (gigs and festivals, album ratings and reviews, lists, following friends, setlists from setlist.fm).
+
+- `/api/meta`: title, artist and cover for a pasted YouTube or SoundCloud link (official oEmbed, no key needed).
+- `/api/resolve`: finds a YouTube video for an imported track and caches it in D1 so each song is looked up once (200 lookups per user per day).
+- `/api/poster`: reads a poster image and returns the acts, date and venue.
+- `/api/profile`: avatar, banner and bio.
+- `public/welcome.html`: landing page at `/welcome`. To make it the home page, move the player to its own path or rename the files.
+
+## Playing from other platforms
+YouTube, SoundCloud and Spotify tracks play through each service's **official embedded player** (kept visible, as their terms require). Spotify's embed plays 30-second previews unless the listener is signed in to Spotify Premium in that browser. The equalizer and audio-reactive visuals only work with your own files, because embedded players don't expose their audio.
 
 ## Updating an existing deployment
 ```bash
