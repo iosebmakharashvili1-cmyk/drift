@@ -10,12 +10,16 @@ async function login(env,uid){const t=hex(crypto.getRandomValues(new Uint8Array(
 let sp={t:'',exp:0};
 async function spTok(env){if(sp.exp>Date.now())return sp.t;const r=await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{authorization:'Basic '+btoa(env.SPOTIFY_ID+':'+env.SPOTIFY_SECRET),'content-type':'application/x-www-form-urlencoded'},body:'grant_type=client_credentials'});const j=await r.json();sp={t:j.access_token,exp:Date.now()+(j.expires_in-60)*1000};return sp.t}
 async function spGet(env,p){const r=await fetch(p.startsWith('http')?p:'https://api.spotify.com/v1'+p,{headers:{authorization:'Bearer '+await spTok(env)}});if(!r.ok)throw new Error('Spotify returned '+r.status);return r.json()}
-async function imp(env,url){const m=url.match(/open\.spotify\.com\/(?:intl-[a-z]+\/)?(track|album|playlist)\/([A-Za-z0-9]+)/);if(!m)throw new Error('Unsupported link');if(!env.SPOTIFY_ID)throw new Error('Import is not configured on this server');const [,k,id]=m,tr=x=>({title:x.name,artist:x.artists[0].name,dur:Math.round((x.duration_ms||0)/1000)});
+async function imp(env,url){const m=url.match(/open\.spotify\.com\/(?:intl-[a-z]+\/)?(track|album|playlist)\/([A-Za-z0-9]+)/);if(!m)throw new Error('Unsupported link');if(!env.SPOTIFY_ID)throw new Error('Import is not configured on this server');const [,k,id]=m,tr=x=>({title:x.name,artist:x.artists[0].name,dur:Math.round((x.duration_ms||0)/1000),id:x.id,cover:x.album&&x.album.images&&x.album.images[1]?x.album.images[1].url:null});
  if(k==='track'){const x=await spGet(env,'/tracks/'+id);return{name:x.name,tracks:[tr(x)]}}
  if(k==='album'){const x=await spGet(env,'/albums/'+id);return{name:x.name,tracks:x.tracks.items.map(tr)}}
- const x=await spGet(env,'/playlists/'+id+'?fields=name,tracks(items(track(name,duration_ms,artists(name))),next)');let it=x.tracks.items,n=x.tracks.next;while(n&&it.length<1000){const j=await spGet(env,n);it=it.concat(j.items);n=j.next}
+ const x=await spGet(env,'/playlists/'+id+'?fields=name,tracks(items(track(id,name,duration_ms,artists(name),album(images))),next)');let it=x.tracks.items,n=x.tracks.next;while(n&&it.length<1000){const j=await spGet(env,n);it=it.concat(j.items);n=j.next}
  return{name:x.name,tracks:it.filter(i=>i.track).map(i=>tr(i.track)).slice(0,1000)}}
 
+// per-user daily caps for paid or rate-limited lookups
+async function cap(env,uid,kind,max){const day=new Date().toISOString().slice(0,10),r=await env.DB.prepare('INSERT INTO usage VALUES(?,?,?,1) ON CONFLICT(uid,day,kind) DO UPDATE SET n=n+1 RETURNING n').bind(uid,day,kind).first();return r.n<=max}
+const clean=t=>t.replace(/\s*[\(\[][^\)\]]*(official|lyric|video|audio|visuali[sz]er|hd|4k)[^\)\]]*[\)\]]/ig,'').trim();
+function split(title,author){const m=title.match(/^(.+?)\s+[-–]\s+(.+)$/);return m?{artist:m[1].trim(),title:clean(m[2])}:{artist:String(author||'').replace(/ - Topic$/,''),title:clean(title)}}
 export default{async fetch(req,env){const u=new URL(req.url),p=u.pathname;
  if(!p.startsWith('/api/'))return new Response('Not found',{status:404});
  try{
@@ -58,6 +62,34 @@ export default{async fetch(req,env){const u=new URL(req.url),p=u.pathname;
   const r=await fetch('https://api.setlist.fm/rest/1.0/search/setlists?'+q,{headers:{'x-api-key':env.SETLISTFM_KEY,accept:'application/json'}});if(!r.ok)return J({error:'No setlist found'},404);
   const j=await r.json(),s=(j.setlist||[]).find(x=>x.sets&&x.sets.set&&x.sets.set.some(t=>t.song&&t.song.length));if(!s)return J({error:'No setlist found'},404);
   return J({songs:s.sets.set.flatMap(t=>(t.song||[]).map(x=>x.name)).filter(Boolean)})}
+ if(p==='/api/meta'){const raw=u.searchParams.get('url')||'';let h;try{h=new URL(raw).hostname.replace(/^www\.|^m\./,'')}catch(e){return J({error:'Paste a full link'},400)}
+  const yt=/^(youtube\.com|music\.youtube\.com|youtu\.be)$/.test(h),sc=h==='soundcloud.com';if(!yt&&!sc)return J({error:'Unsupported link'},400);
+  const m=raw.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{11})/);if(yt&&!m)return J({error:'Paste a link to a single video'},400);
+  const r=await fetch(yt?'https://www.youtube.com/oembed?format=json&url='+encodeURIComponent('https://www.youtube.com/watch?v='+m[1]):'https://soundcloud.com/oembed?format=json&url='+encodeURIComponent(raw));
+  if(!r.ok)return J({error:'Track not found or not embeddable'},404);const o=await r.json();
+  return J(yt?{...split(o.title,o.author_name),cover:o.thumbnail_url,stream:{p:'yt',id:m[1]}}:{title:o.title,artist:o.author_name,cover:o.thumbnail_url,stream:{p:'sc',url:raw}})}
+ if(p==='/api/resolve'){const a=(u.searchParams.get('artist')||'').slice(0,100),t=(u.searchParams.get('title')||'').slice(0,150),k=(a+'|'+t).toLowerCase();
+  const c=await env.DB.prepare('SELECT ref FROM resolved WHERE k=?').bind(k).first();if(c)return J({stream:{p:'yt',id:c.ref}});
+  if(!env.YOUTUBE_KEY)return J({error:'Track lookup is not configured on this server'},501);
+  if(!await cap(env,U.id,'resolve',200))return J({error:'Daily lookup limit reached'},429);
+  const r=await fetch('https://www.googleapis.com/youtube/v3/search?'+new URLSearchParams({part:'snippet',type:'video',videoCategoryId:'10',videoEmbeddable:'true',maxResults:'1',q:a+' '+t+' audio',key:env.YOUTUBE_KEY}));
+  if(!r.ok)return J({error:'Lookup failed'},502);const j=await r.json(),id=j.items&&j.items[0]&&j.items[0].id.videoId;if(!id)return J({error:'Not found'},404);
+  await env.DB.prepare('INSERT OR REPLACE INTO resolved VALUES(?,?,?)').bind(k,id,Date.now()).run();return J({stream:{p:'yt',id}})}
+ if(p==='/api/poster'&&req.method==='POST'){if(!env.ANTHROPIC_API_KEY)return J({error:'Poster scan is not configured on this server'},501);
+  const b=await req.json(),m=/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(String(b.image||''));if(!m||m[2].length>2.5e6)return J({error:'Send a JPEG, PNG or WebP image under about 1.8 MB'},400);
+  if(!await cap(env,U.id,'poster',15))return J({error:'Daily poster scan limit reached'},429);
+  const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'x-api-key':env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01','content-type':'application/json'},body:JSON.stringify({model:'claude-sonnet-5-5',max_tokens:800,messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:m[1],data:m[2]}},{type:'text',text:'This is a concert, tour or festival poster. Return ONLY a JSON object, no prose: {"event":string|null,"venue":string|null,"city":string|null,"date":"YYYY-MM-DD"|null,"acts":[string]}. List every performing act in billing order. Use null when something is not shown. Do not invent details.'}]}]})});
+  if(!r.ok)return J({error:'Scan failed'},502);const j=await r.json(),tx=(j.content||[]).map(x=>x.text||'').join('');let o;try{o=JSON.parse(tx.slice(tx.indexOf('{'),tx.lastIndexOf('}')+1))}catch(e){return J({error:'Could not read that poster'},422)}
+  return J({event:o.event||null,venue:o.venue||null,city:o.city||null,date:/^\d{4}-\d\d-\d\d$/.test(o.date||'')?o.date:null,acts:(Array.isArray(o.acts)?o.acts:[]).map(x=>String(x).slice(0,120)).slice(0,60)})}
+ if(p==='/api/profile'&&req.method==='PUT'){const b=await req.json(),bio=String(b.bio||'').slice(0,280),ok=(x,n)=>typeof x==='string'&&/^data:image\/(jpeg|png|webp);base64,/.test(x)&&x.length<=n?x:null;
+  const old=await env.DB.prepare('SELECT avatar,banner FROM profiles WHERE uid=?').bind(U.id).first()||{},av=b.avatar===undefined?old.avatar:ok(b.avatar,90000),bn=b.banner===undefined?old.banner:ok(b.banner,220000);
+  await env.DB.prepare('INSERT INTO profiles VALUES(?,?,?,?,?) ON CONFLICT(uid) DO UPDATE SET bio=excluded.bio,avatar=excluded.avatar,banner=excluded.banner,updated=excluded.updated').bind(U.id,bio,av||null,bn||null,Date.now()).run();return J({ok:true})}
+ const pm=p.match(/^\/api\/profile\/([a-z0-9_]{3,24})$/);
+ if(pm){const t=await env.DB.prepare('SELECT id,name FROM users WHERE name=?').bind(pm[1]).first();if(!t)return J({error:'No such user'},404);
+  const pr=await env.DB.prepare('SELECT bio,avatar,banner FROM profiles WHERE uid=?').bind(t.id).first()||{},f=await env.DB.prepare('SELECT 1 x FROM follows WHERE follower=? AND followee=?').bind(U.id,t.id).first(),
+   c=await env.DB.prepare(`SELECT kind,COUNT(*) n FROM entries WHERE uid=? AND kind IN ('gig','album') GROUP BY kind`).bind(t.id).all(),fc=await env.DB.prepare('SELECT COUNT(*) n FROM follows WHERE followee=?').bind(t.id).first(),self=t.id===U.id;
+  const rec=(self||f)?(await env.DB.prepare(`SELECT kind,artist,day,data FROM entries WHERE uid=? AND kind IN ('gig','album') ORDER BY created DESC LIMIT 8`).bind(t.id).all()).results:null;
+  return J({name:t.name,bio:pr.bio||'',avatar:pr.avatar||null,banner:pr.banner||null,following:!!f,self,gigs:(c.results.find(x=>x.kind==='gig')||{}).n||0,albums:(c.results.find(x=>x.kind==='album')||{}).n||0,followers:fc.n,recent:rec})}
  if(p==='/api/import'){const b=await req.json();return J(await imp(env,String(b.url||'')))}
  if(p==='/api/rooms'&&req.method==='POST'){const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',id=[...crypto.getRandomValues(new Uint8Array(6))].map(x=>A[x%A.length]).join('');
   await env.DB.prepare('INSERT INTO rooms VALUES(?,?,?)').bind(id,U.id,Date.now()).run();return J({id})}
